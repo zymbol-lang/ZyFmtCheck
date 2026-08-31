@@ -1,4 +1,7 @@
-# ZyFormatCheck
+# ZyFmtCheck
+
+*Named for the command it guards: `zymbol fmt`, so the project, its runner
+`zyfmtcheck` and the subcommand all spell the same three letters.*
 
 **The formatter moves things. It does not change them. This proves it, or names
 what it changed.**
@@ -35,6 +38,46 @@ is read by the runner and by nothing else. **Adding a normalization means adding
 an entry with a reason, in a file a reviewer opens.** A formatter cannot grow a
 new power quietly. That is the whole design.
 
+## The pins — five findings, five minimal files
+
+`cases/pin/` holds one file per named finding, and the assertion is the sharpest
+a formatter allows: **each is already formatted, so `zymbol fmt` on it must be a
+no-op — byte for byte.** No goldens, no tolerance, nothing to keep in step. If a
+behaviour comes back, the file changes or the gate refuses it, and either is red.
+
+They exist because a body cannot name anything. Running over GO answers
+"something changed in GO"; a pin answers "the interpolated-string arm is gone",
+which is the difference between a report and a diagnosis.
+
+**Every one was verified by reverting its fix**, and that mattered: two of the
+first drafts held while the fix was gone.
+
+| pin | holds |
+|---|---|
+| `FMT-001` | an interpolated string reprints as written |
+| `FMT_002` | the export block stays where the author put it |
+| `FMT-004` | a bare non-ASCII key stays bare |
+| `FMT-005` | a quoted key stays quoted |
+| `FMT-006` | an output statement is never wrapped |
+
+Three things they taught, written in their own headers so the next editor does
+not repeat them:
+
+- **`FMT-001` must use interpolated strings.** The first draft used plain ones,
+  which take the `String` arm — never broken — so it passed with the fix
+  reverted.
+- **`FMT-006` needs a long ARGUMENT LIST, not a long line.** The wrap decision
+  measures the arguments; a 116-character line with a short call wraps nothing.
+- **There is no `FMT-003`.** It held the Rust-`{:?}` escaping, and once
+  `NamedTupleExpr` records `quoted` and the identifier rule is the lexer's, that
+  branch is unreachable from parsed input — reverting the escaping alone changes
+  nothing, measured. The fix stays as defence in depth; the pin was retired,
+  because a pin that cannot fail is not a pin. `FMT-004`'s header says so.
+
+`FMT_002` spells its ID with underscores: a module's name must be an identifier
+and must match its file stem, so that one pin cannot spell its own ID the way
+the rest do.
+
 ## What it does
 
 ```bash
@@ -44,7 +87,7 @@ new power quietly. That is the whole design.
 ./bin/zyfmtcheck -v              # show the layout categories too
 ```
 
-Three phases:
+Pins first, then three phases over each body:
 
 1. **Format** — copy the tree to a *temporary directory* and format every `.zy`
    there. Never in place: the formatter writes, and a validator that can damage
@@ -75,23 +118,21 @@ Two behaviours, both invisible to the gate and to P1–P4, both now fixed:
 
 | | |
 |---|---|
-| **Interpolated strings were re-spelled** | a newline written inside `"…{x}…"` came back as `\n`, and `\'` came back as `'`. `literal_source_form` had an arm for `String` and none for `InterpolatedString`, so every interpolated literal fell through to the re-writer. Same family as `४२` → `42`. |
-| **The export block was moved** | a module that opens with `#> { … }` and imports underneath came back with the two swapped. The gate caught it and refused the file — the right failure, and still a failure: **fourteen** application files could not be formatted at all, including every `api/` re-export layer in GO and Chaturanga. |
+| **Interpolated strings were re-spelled** | a newline written inside `"…{x}…"` came back as `\n`, and `\'` came back as `'`. `literal_source_form` had an arm for `String` and none for `InterpolatedString`. Same family as `४२` → `42`. |
+| **The export block was moved** | a module opening with `#> { … }` and imports underneath came back with the two swapped. |
+| **A dictionary key was re-spelled, twice over** | the quoted form went through Rust's `{:?}`, writing a combining mark as `\u{941}` — syntax Zymbol does not have, which its own lexer then read as a broken interpolation. And the bare/quoted decision used `is_alphanumeric()`, narrower than the lexer's rule, so `मुद्रा` was judged to need quoting. |
+| **A quoted key was un-quoted** | a key arrives as a bare `String` either way, so the formatter had to guess and printed every key that *could* be bare bare — `String("k")` became `Ident("k")`. Fixed by recording `quoted` on the node, the remedy §12 names. |
+| **An output statement was wrapped** | `>>` and `>>~` end at the line, so breaking a long call inside one ends the statement and leaves a fragment. |
 
-After both: the seven applications format clean and their suites are unchanged,
-and refusals went from fourteen to two.
+All five are fixed and all five have a pin. The common shape is worth naming:
+each was the formatter **deciding** how something ought to be written — quotes,
+escapes, order, line length — instead of reproducing what was there.
 
 ## What is still open
 
-Two files the gate refuses, both string handling in the formatter:
-
-- `Chaturanga/दर्शनम्/चित्रणम्.zy` — `formatted output no longer parses:
-  unexpected token: String("│"`
-- `ZyBank/configuración/preferencias.zy` — `no longer lexes: invalid character
-  in string interpolation`, in a file with no interpolation in it
-
-The gate refusing is correct behaviour and the reason the files are intact. They
-are still two real programs `zymbol fmt` cannot format.
+Nothing in the applications: **refusals went from fourteen to zero**, and every
+suite is byte-identical after formatting. The corpus's thirteen refusals are
+files that do not parse — error fixtures — which is the correct refusal.
 
 ## Its place among the other layers
 
@@ -100,7 +141,7 @@ are still two real programs `zymbol fmt` cannot format.
 | **LDV** (`interpreter/LDV.md`) | can the language express this domain? |
 | **ZyQuality** (`zyquality/`) | do the engines agree, and match their goldens? |
 | **ZyDDT** (`ZyDDT/`) | do all engines still answer the same, correctly? |
-| **ZyFormatCheck** (here) | did the formatter change anything it was not allowed to? |
+| **ZyFmtCheck** (here) | did the formatter change anything it was not allowed to? |
 
 It borrows ZyQuality's bodies — the corpus and `project/apps.toml` — and owns
 nothing but the question. `ZYQUALITY_ROOT` and `ZYMBOL_BIN` point it elsewhere.

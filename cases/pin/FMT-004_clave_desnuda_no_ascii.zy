@@ -1,0 +1,21 @@
+// PIN FMT-004 — a bare key that is not ASCII stays bare.
+//
+// The bare/quoted decision used `is_alphanumeric()`, which is narrower than the
+// lexer's own identifier rule: a combining mark is category Mn and fails it, so
+// `मुद्रा` — written bare, and a valid identifier everywhere else in the
+// language — was judged to need quoting and came back as a String where the
+// source had an Ident.
+//
+// `literals.rs` had already written this lesson down for `{…}` interpolation:
+// a narrower rule here rejects identifiers the rest of the language allows.
+//
+// A second fix lives behind this same door and has no pin of its own, which is
+// worth saying rather than pretending otherwise: the quoted form used to go
+// through Rust's `{:?}`, writing a combining mark as `\u{941}` — syntax Zymbol
+// does not have. Once `NamedTupleExpr` records `quoted` (FMT-005) and this rule
+// uses the lexer's, that branch is unreachable from parsed input: reverting the
+// escaping alone changes nothing, measured. It is defence in depth, and a pin
+// that cannot fail is not a pin.
+alias = #(मुद्रा: "moneda", 通貨: "currency", DaS: "beq")
+
+>> alias.मुद्रा ¶

@@ -142,6 +142,43 @@ def layout_kind(before: str, after: str) -> str:
     return "spacing"
 
 
+def pins(verbose: bool) -> list[tuple[str, str]]:
+    """The named findings, held by the sharpest assertion a formatter allows.
+
+    Every file in `cases/pin/` is ALREADY FORMATTED, so `zymbol fmt` on it must
+    be a no-op: byte for byte, the file formatted is the file. No goldens, no
+    tolerance, nothing to keep in step — if any of the six behaviours comes
+    back, the file changes or the gate refuses it, and either is red.
+
+    They exist because the bodies cannot name anything. ZyFmtCheck over the
+    LDV applications answers "something in GO changed"; a pin answers "the
+    interpolated-string arm is gone", which is the difference between a report
+    and a diagnosis. Six findings, six files, and each says in its header what
+    it holds and what breaks if it is edited into passing.
+    """
+    out = []
+    for case in sorted((HERE / "cases" / "pin").glob("*.zy")):
+        with tempfile.TemporaryDirectory() as d:
+            t = Path(d) / case.name
+            t.write_text(case.read_text(encoding="utf-8"), encoding="utf-8")
+            r = subprocess.run([str(ZYMBOL), "fmt", str(t), "--write"],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                why = (r.stderr or r.stdout).strip().splitlines()
+                out.append((case.name, "REFUSED — " + (why[-1] if why else "")))
+                continue
+            after = t.read_text(encoding="utf-8")
+        if after != case.read_text(encoding="utf-8"):
+            before = case.read_text(encoding="utf-8").split("\n")
+            aft = after.split("\n")
+            first = next((i for i in range(min(len(before), len(aft)))
+                          if before[i] != aft[i]), 0)
+            out.append((case.name,
+                        f"CHANGED at line {first + 1}: "
+                        f"{before[first].strip()[:44]!r} → {aft[first].strip()[:44]!r}"))
+    return out
+
+
 def format_tree(src_dir: Path, work: Path) -> tuple[list[Path], list[tuple[Path, str]]]:
     """Phase 1. Copy, then format in the copy. Returns (formatted, refused)."""
     shutil.copytree(src_dir, work, dirs_exist_ok=True, symlinks=True)
@@ -251,6 +288,19 @@ def main() -> int:
           f"declared: {', '.join(ids)}")
 
     rc = GREEN
+
+    # Pins first. A body says something changed; a pin says WHICH rule went, and
+    # a red pin makes every number below it easier to read.
+    broken = pins(args.verbose)
+    n_pins = len(list((HERE / "cases" / "pin").glob("*.zy")))
+    if broken:
+        print(f"  {'pins':<12} \033[0;31m{len(broken)} of {n_pins} broken\033[0m")
+        for name, why in broken:
+            print(f"      \033[0;31m{name}\033[0m  {why}")
+        rc = RED
+    else:
+        print(f"  {'pins':<12} \033[0;32m{n_pins} hold\033[0m"
+              f" \033[2m· formatting each is a no-op\033[0m")
     for name, path, app in bodies:
         if not path.exists():
             print(f"  {name:<12} could not run — {path} is absent")

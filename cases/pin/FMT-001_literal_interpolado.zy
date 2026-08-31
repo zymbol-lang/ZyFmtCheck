@@ -1,0 +1,24 @@
+// PIN FMT-001 — an INTERPOLATED string reprints AS WRITTEN.
+//
+// `literal_source_form` had an arm for `String` and none for
+// `InterpolatedString`, so every `"…{x}…"` fell through to the re-writer: a
+// newline written inside one came back as `\n`, and `\'` came back as `'`.
+// Value-preserving, source-changing, and the same family as `४२` → `42`.
+//
+// Invisible to P1-P4 and to the token gate: the output reparses, is idempotent,
+// runs identically, keeps every comment, and lexes to the same tokens. It was
+// simply not what the author wrote.
+//
+// Every string below MUST contain a `{…}`. A plain string takes the `String`
+// arm, which was never broken — the first draft of this pin used plain strings
+// and held while the fix was reverted, which is the failure a pin exists to not
+// have. Verified by reverting: with the arm gone, both lines change.
+n = 1
+
+línea = "primera {n}
+segunda"
+
+comilla = "un apóstrofo \' y una {n}"
+
+>> línea ¶
+>> comilla ¶

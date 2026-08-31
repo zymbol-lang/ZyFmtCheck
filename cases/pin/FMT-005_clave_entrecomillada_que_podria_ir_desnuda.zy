@@ -1,0 +1,15 @@
+// PIN FMT-005 — a key written in quotes stays in quotes.
+//
+// A key reaches the AST as a bare `String` either way, so `#("k": 1)` and
+// `#(k: 1)` are the same node — and the formatter, having to choose, printed
+// every key that COULD be bare bare. `String("k")` became `Ident("k")`: a token
+// change, however identical the value.
+//
+// Unfixable from the AST alone, so `NamedTupleExpr` records `quoted`, which is
+// the remedy FORMATTER_RULES.md §12 names for exactly this. Both spellings are
+// here, side by side, because the pin has to hold BOTH directions: quoting the
+// bare one is the same bug in reverse.
+mixto = #("k": 1, k2: 2)
+
+>> mixto["k"] ¶
+>> mixto.k2 ¶

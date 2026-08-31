@@ -1,0 +1,26 @@
+// PIN FMT-006 — an output statement is never wrapped.
+//
+// `>>` and `>>~` are terminated by the end of the line, so breaking a long call
+// across lines inside one does not reformat the statement: it ENDS it, and
+// leaves the rest as a fragment that does not parse. The gate refused the file,
+// correctly, and `Chaturanga/दर्शनम्/चित्रणम्.zy` — which draws a board this way —
+// could not be formatted at all.
+//
+// Line length is a preference. Emitting a program that does not parse is not a
+// trade-off against it.
+//
+// What has to be long is the ARGUMENT LIST, not the line: the wrap decision
+// measures the arguments. The first draft had a 116-character line whose call
+// was short, so nothing wrapped and the pin held while the guard was reverted.
+// Verified by reverting.
+centrado(t, w, r) { <~ t }
+
+recortado(t, w, r) { <~ t }
+
+fila_actual = 1
+columna_inicial = 1
+titulo_del_tablero_completo = "tablero"
+ancho_interior_disponible = 20
+relleno_por_defecto = " "
+
+>>~ (fila_actual, columna_inicial) > "│" centrado(recortado(titulo_del_tablero_completo, ancho_interior_disponible, relleno_por_defecto), ancho_interior_disponible, relleno_por_defecto) "│"

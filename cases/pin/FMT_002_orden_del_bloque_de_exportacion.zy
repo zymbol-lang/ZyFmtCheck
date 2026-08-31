@@ -1,0 +1,22 @@
+// PIN FMT-002 — the export block stays where the author put it.
+//
+// Imports were printed first unconditionally, while `#> { … }` was placed in
+// source order relative to the STATEMENTS only. So a module that opens with its
+// export block and imports underneath came back with the two swapped — a token
+// reordering the gate refused, which left fourteen application files
+// unformattable, among them every `api/` re-export layer in GO and Chaturanga.
+//
+// A formatter reorders nothing.
+//
+// Underscores in the name and not the `FMT-002` the other pins use: a module's
+// name has to be an identifier and has to match its file stem (E001), so this
+// one pin cannot spell its own ID the way the rest do.
+# FMT_002_orden_del_bloque_de_exportacion {
+
+    #> {
+        saluda
+    }
+    <# std/math => m
+
+    saluda() { <~ m::abs(-1) }
+}
