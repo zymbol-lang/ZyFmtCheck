@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""zyfmtcheck — `zymbol fmt` moved things and changed nothing.
+
+    zyfmtcheck                  the LDV applications
+    zyfmtcheck --body corpus    the corpus instead
+    zyfmtcheck --only go        one application
+    zyfmtcheck -v               list the layout categories too
+
+Why this exists, when P1–P4 and the formatter's own gate already run
+-------------------------------------------------------------------
+The gate (`crates/zymbol-formatter/src/gate.rs`) compares the TOKEN STREAM, and
+a `TokenKind` carries the value rather than the spelling: `४२` and `42` are both
+`Integer(42)`. So a rewrite that keeps the token stream passes it — printing
+`42` for `४२` did, for four releases, with P1–P4 green as well. Reparse,
+idempotence, runtime equality and comment counts cannot see it either: the
+output reparses, is stable, runs the same and keeps every comment. The program
+had simply stopped being written in Devanagari.
+
+What this asks instead is the property the other five miss: **the code is
+untouchable and the comments are untouchable**. Everything else is layout.
+
+Three phases, and the third is the one that cannot be argued with
+----------------------------------------------------------------
+  1. FORMAT   copy the tree to a temporary directory and format every `.zy`
+              there. Never in place: the formatter writes, and a validator that
+              can damage what it validates is worse than no validator.
+  2. VERIFY   every difference must be explained by `fmt/normalizations.toml`.
+              An unexplained one names the file and quotes both sides.
+  3. RUN      execute the application's own suite FROM THE COPY and require the
+              same output as the original. A formatted program that no longer
+              behaves is the failure everything above is a proxy for.
+
+Why the LDV applications and not only the corpus
+------------------------------------------------
+Because they are the richest Zymbol there is: real nesting, real comments,
+hand-aligned tables, five writing systems, modules that import each other. The
+corpus is 661 files that are mostly a few lines long, and a formatter's damage
+lives in exactly what short files do not have. The corpus is still available
+with `--body corpus`, and it is worth running: it is wider, if shallower.
+
+Exit codes, the contract every runner in this project honours:
+  0 green · 1 red, an unexplained change or a behaviour change · 2 no verdict.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+from collections import Counter
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parents[1]
+WORKSPACE = HERE.parent
+ROOT = Path(os.environ.get("ZYQUALITY_ROOT", WORKSPACE / "zyquality"))
+ZYMBOL = Path(os.environ.get("ZYMBOL_BIN", WORKSPACE / "interpreter" / "target" / "release" / "zymbol"))
+
+GREEN, RED, NOVERDICT = 0, 1, 2
+
+# The scanner has to know about strings, and the first version did not.
+#
+# `"http://localhost:11434"` made a `//` comment rule eat the rest of the line
+# and report that a whole branch had vanished, and a string with a real newline
+# in it looked like a code change because the newline is whitespace and its
+# reprinted `\n` is not. Two false alarms out of five findings — and a validator
+# that cries wolf is worse than no validator, because the next real one is read
+# as noise too.
+#
+# So: one pass that knows the four states a character can be in.
+
+
+def _scan(src: str):
+    """Split the source into (code, comments, literals).
+
+    `code` is every character outside a comment and outside a literal, with
+    whitespace and `;` dropped. `literals` keeps each string and char literal
+    VERBATIM — including a newline written inside one — because the spelling of
+    a literal is exactly what §2.1 says the formatter must preserve, and it is
+    the property the `४२` bug broke. `comments` is a multiset of bodies.
+    """
+    code, comments, literals = [], Counter(), []
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == "/" and i + 1 < n and src[i + 1] == "/":
+            j = src.find("\n", i)
+            j = n if j < 0 else j
+            comments[" ".join(src[i:j].split())] += 1
+            i = j
+        elif c == "/" and i + 1 < n and src[i + 1] == "*":
+            j = src.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            comments[" ".join(src[i:j].split())] += 1
+            i = j
+        elif c in '"\'':
+            quote, j = c, i + 1
+            while j < n:
+                if src[j] == "\\":
+                    j += 2
+                    continue
+                if src[j] == quote:
+                    j += 1
+                    break
+                j += 1
+            literals.append(src[i:j])
+            code.append("\x00")          # a literal occupies one position
+            i = j
+        else:
+            if not c.isspace() and c != ";":
+                code.append(c)
+            i += 1
+    return "".join(code), comments, literals
+
+
+def code_skeleton(src: str) -> str:
+    """The program with comments, whitespace and `;` gone, literals as atoms."""
+    code, _, lits = _scan(src)
+    return code + "\x01" + "\x01".join(lits)
+
+
+def comment_bag(src: str) -> Counter:
+    """Every comment body, whitespace-collapsed. A multiset, not a count: the
+    formatter's own G4 counts them, and a count cannot tell a comment that moved
+    from one that was replaced by a different comment."""
+    return _scan(src)[1]
+
+
+def layout_kind(before: str, after: str) -> str:
+    """Which layout rule a whitespace-only line change looks like.
+
+    Reported, never failed — §10 exempts whitespace wholesale. It is here so a
+    NEW spacing behaviour is visible in the report rather than silent."""
+    if before.strip() == "" or after.strip() == "":
+        return "blank line"
+    if before.strip() == after.strip():
+        return "indentation"
+    if "  " in before and "  " not in after:
+        return "alignment padding collapsed"
+    return "spacing"
+
+
+def format_tree(src_dir: Path, work: Path) -> tuple[list[Path], list[tuple[Path, str]]]:
+    """Phase 1. Copy, then format in the copy. Returns (formatted, refused)."""
+    shutil.copytree(src_dir, work, dirs_exist_ok=True, symlinks=True)
+    done, refused = [], []
+    for f in sorted(work.rglob("*.zy")):
+        r = subprocess.run([str(ZYMBOL), "fmt", str(f), "--write"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            why = (r.stderr or r.stdout).strip().splitlines()
+            refused.append((f.relative_to(work), why[-1] if why else "exit %d" % r.returncode))
+        else:
+            done.append(f)
+    return done, refused
+
+
+def verify(src_dir: Path, work: Path, files: list[Path], verbose: bool):
+    """Phase 2. Every difference explained, or named."""
+    findings, layout = [], Counter()
+    for f in files:
+        rel = f.relative_to(work)
+        before = (src_dir / rel).read_text(encoding="utf-8", errors="replace")
+        after = f.read_text(encoding="utf-8", errors="replace")
+        if before == after:
+            continue
+        if code_skeleton(before) != code_skeleton(after):
+            findings.append((rel, "the CODE changed", _first_diff(
+                code_skeleton(before), code_skeleton(after))))
+            continue
+        if comment_bag(before) != comment_bag(after):
+            gone = comment_bag(before) - comment_bag(after)
+            new = comment_bag(after) - comment_bag(before)
+            findings.append((rel, "a COMMENT changed",
+                             f"-{list(gone)[:1]}  +{list(new)[:1]}"))
+            continue
+        for b, a in zip(before.split("\n"), after.split("\n")):
+            if b != a:
+                layout[layout_kind(b, a)] += 1
+    return findings, layout
+
+
+def execute(src_dir: Path, work: Path, app: dict, timeout: float = 300.0):
+    """Phase 3. The application's own suite, run from the COPY.
+
+    Everything above is a proxy for this one question: does the formatted
+    program still do what the program did?  A skeleton comparison can be fooled
+    by a reordering it cannot see; running cannot.
+
+    Run from the copy and compared against the original run — both fresh, so a
+    suite that writes files (ZyBank's ledger, GO's game records) starts from the
+    same state in each. Engine: the tree-walker, because the question is whether
+    the SOURCE still means the same, and asking two engines would be asking a
+    different question that `zyq consensus` already asks.
+    """
+    suite = (ROOT / app["dir"]).resolve()
+    rel_suite = suite.relative_to(src_dir)
+    cases = sorted(p for p in suite.glob("*.zy"))
+    if not cases:
+        return []
+    out = []
+    for case in cases:
+        rel = case.relative_to(src_dir)
+        before = subprocess.run([str(ZYMBOL), "run", case.name], cwd=case.parent,
+                                capture_output=True, text=True, timeout=timeout,
+                                stdin=subprocess.DEVNULL)
+        after_dir = work / rel_suite
+        after = subprocess.run([str(ZYMBOL), "run", case.name], cwd=after_dir,
+                               capture_output=True, text=True, timeout=timeout,
+                               stdin=subprocess.DEVNULL)
+        if before.stdout != after.stdout:
+            out.append((rel, _first_diff(before.stdout, after.stdout)))
+    return out
+
+
+def _first_diff(a: str, b: str) -> str:
+    i = next((k for k in range(min(len(a), len(b))) if a[k] != b[k]), min(len(a), len(b)))
+    lo, hi = max(0, i - 30), i + 30
+    return f"…{a[lo:hi]}…  →  …{b[lo:hi]}…"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--body", default="apps", choices=["apps", "corpus"])
+    ap.add_argument("--only", default="")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("-h", "--help", action="store_true")
+    args = ap.parse_args()
+    if args.help:
+        print(__doc__)
+        return GREEN
+
+    if not ZYMBOL.exists():
+        print(f"zyfmtcheck: interpreter not found: {ZYMBOL}", file=sys.stderr)
+        return NOVERDICT
+
+    decl = tomllib.loads((HERE / "normalizations.toml").read_text(encoding="utf-8"))
+    ids = [n["id"] for n in decl["normalization"]]
+
+    if args.body == "corpus":
+        bodies = [("corpus", ROOT / "corpus", None)]
+    else:
+        apps = tomllib.loads((ROOT / "project" / "apps.toml").read_text(encoding="utf-8"))
+        bodies = [(a["id"], (ROOT / a["dir"]).resolve().parent, a)
+                  for a in apps["app"]
+                  if not args.only or a["id"] in args.only.split(",")]
+
+    print(f"zyfmtcheck  {len(bodies)} bod{'y' if len(bodies) == 1 else 'ies'} · "
+          f"declared: {', '.join(ids)}")
+
+    rc = GREEN
+    for name, path, app in bodies:
+        if not path.exists():
+            print(f"  {name:<12} could not run — {path} is absent")
+            rc = max(rc, NOVERDICT)
+            continue
+        with tempfile.TemporaryDirectory(prefix=f"fmtfid-{name}-") as tmp:
+            work = Path(tmp) / path.name
+            files, refused = format_tree(path, work)
+            findings, layout = verify(path, work, files, args.verbose)
+
+            behaved = []
+            if app is not None and not findings:
+                try:
+                    behaved = execute(path, work, app)
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    print(f"  {name:<12} \033[0;33mcould not run the suite\033[0m  {exc}")
+                    rc = max(rc, NOVERDICT)
+
+            broken = findings or behaved
+            head = (f"{len(files)} formatted, suite unchanged" if not broken
+                    else f"{len(findings) + len(behaved)} UNEXPLAINED")
+            colour = "\033[0;32m" if not broken else "\033[0;31m"
+            print(f"  {name:<12} {colour}{head}\033[0m"
+                  + (f" · {len(refused)} refused by the gate" if refused else ""))
+            for rel, detail in behaved:
+                print(f"      \033[0;31mthe PROGRAM behaves differently\033[0m  {rel}")
+                print(f"        {detail}")
+                rc = RED
+            for rel, what, detail in findings:
+                print(f"      \033[0;31m{what}\033[0m  {rel}")
+                print(f"        {detail}")
+                rc = RED
+            for rel, why in refused[:4] if args.verbose else []:
+                print(f"      \033[0;33mrefused\033[0m {rel}  \033[2m{why[:80]}\033[0m")
+            if args.verbose and layout:
+                print("      " + "\033[2m" + " · ".join(
+                    f"{v} {k}" for k, v in layout.most_common()) + "\033[0m")
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())

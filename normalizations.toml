@@ -1,0 +1,55 @@
+# What `zymbol fmt` is ALLOWED to change.
+#
+# `interpreter/FORMATTER_RULES.md` § 10 lists this in prose and the formatter's
+# own gate checks something else — the token stream — which is weaker than the
+# prose in a way § 10 documents: `TokenKind` carries the VALUE, not the
+# spelling, so `४२` and `42` are the same `Integer(42)`. That is how printing
+# `42` for `४२` passed the gate for four releases.
+#
+# This file is the prose made executable. `fmt/fmt_fidelity.py` reads it and
+# nothing else; § 10 cites it rather than repeating it. Adding a normalization
+# means adding an entry HERE, with a reason, where a reviewer will see it —
+# which is the point. A formatter that grows a new power silently is the failure
+# this file exists to make impossible.
+#
+# ── The contract, in one sentence ──────────────────────────────────────────
+#
+#   The CODE is untouchable and the COMMENTS are untouchable; everything the
+#   formatter may do is layout.
+#
+# "Code" here means the source text with comments, whitespace and `;` removed.
+# "Comments" means the multiset of comment bodies. If either changes and no
+# entry below explains it, the formatter changed the program — and it is a
+# layout tool, not a code transformer.
+#
+#   level = "code"       may change the code skeleton. Nothing does, and
+#                        nothing should; an entry at this level is a decision.
+#   level = "placement"  may move a comment or a `¶` relative to each other,
+#                        without either disappearing.
+#   level = "layout"     whitespace only. Reported, never failed: § 10 exempts
+#                        whitespace wholesale ("besides whitespace"), and a
+#                        list of every spacing rule would be the formatter
+#                        written twice.
+
+[[normalization]]
+id     = "semicolon-split"
+level  = "code"
+reason = """§10: `a = 1; b = 2` reprints as two lines. The only entry at this
+level, and it removes a token that separates statements — the layout the `;`
+was standing in for."""
+
+[[normalization]]
+id     = "pilcrow-across-trailing-comment"
+level  = "placement"
+reason = """§4.10: the `¶` joins the preceding token unless the line ends in a
+trailing `//` comment, in which case it keeps its own line. So `>> a ¶ // c`
+reprints with the comment before the `¶`. Neither is lost; they swap order."""
+
+[[normalization]]
+id     = "whitespace"
+level  = "layout"
+reason = """§10 exempts whitespace wholesale — indentation, blank-line runs
+collapsing to one, comment alignment padding collapsing, and the spacing rules
+of §4. Reported by category so a NEW spacing behaviour is visible, never failed:
+the alternative is restating §4 here, which is the formatter written twice and
+the second copy drifting."""
