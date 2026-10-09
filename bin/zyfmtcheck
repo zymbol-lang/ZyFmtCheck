@@ -95,6 +95,15 @@ def _scan(src: str):
             j = n if j < 0 else j + 2
             comments[" ".join(src[i:j].split())] += 1
             i = j
+        # `##'` and `##"` are marks, not quotes: the Char and String typespecs
+        # after `<<`, and since v0.0.10 `##'n` casts an Int to its Char. Read as
+        # an opening quote, the `'` of `salida ##'cinta[p]` paired with the
+        # next char literal's quote, every later literal swallowed the code
+        # between two of them, and ZyBF's reflowed match arms were reported as
+        # a change of CODE (2026-10-09).
+        elif c in '"\'' and src[max(0, i - 2):i] == "##":
+            code.append(c)
+            i += 1
         elif c in '"\'':
             quote, j = c, i + 1
             while j < n:
