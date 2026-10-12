@@ -1,0 +1,2 @@
+# Python bytecode: loading bin/zyfmtcheck as a module writes it next to the script.
+__pycache__/
