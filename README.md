@@ -1,5 +1,7 @@
 # ZyFmtCheck
 
+🌐 [zymbol-lang.org](https://zymbol-lang.org) · ▶ [playground](https://zymbol-lang.org/playground.html)
+
 *Named for the command it guards: `zymbol fmt`, so the project, its runner
 `zyfmtcheck` and the subcommand all spell the same three letters.*
 
