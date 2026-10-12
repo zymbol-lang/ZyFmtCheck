@@ -1,6 +1,6 @@
 # What `zymbol fmt` is ALLOWED to change.
 #
-# `interpreter/FORMATTER_RULES.md` § 10 lists this in prose and the formatter's
+# `zymbol-design/FORMATTER_RULES.md` § 10 lists this in prose and the formatter's
 # own gate checks something else — the token stream — which is weaker than the
 # prose in a way § 10 documents: `TokenKind` carries the VALUE, not the
 # spelling, so `४२` and `42` are the same `Integer(42)`. That is how printing
